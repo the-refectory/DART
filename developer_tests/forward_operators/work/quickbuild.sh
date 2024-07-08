@@ -12,11 +12,10 @@ source "$DART"/build_templates/buildfunctions.sh
 
 MODEL="none"
 EXTRA=$DART/models/template/threed_model_mod.f90
-dev_test=1
 TEST="forward_operators"
 LOCATION="threed_sphere"
 
-programs=(
+test_programs=(
 rttov_test
 rttov_unit_tests
 )

@@ -13,10 +13,9 @@ source "$DART"/build_templates/buildfunctions.sh
 MODEL="none"
 EXTRA="$DART"/models/template/threed_model_mod.f90
 LOCATION="threed_sphere"
-dev_test=1
 TEST="utilities"
 
-serial_programs=(
+test_serial_programs=(
 PrecisionCheck
 error_handler_test
 file_utils_test

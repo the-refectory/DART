@@ -13,10 +13,9 @@ source "$DART"/build_templates/buildfunctions.sh
 MODEL="none"
 EXTRA="$DART"/models/template/oned_model_mod.f90
 LOCATION="oned"
-dev_test=1
 TEST="obs_sequence"
 
-programs=(
+test_programs=(
 obs_rwtest
 )
 

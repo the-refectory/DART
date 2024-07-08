@@ -38,6 +38,7 @@ declare -a programs
 declare -a serial_programs
 declare -a model_programs
 declare -a model_serial_programs
+declare -a test_programs
 
 source "$DART"/build_templates/buildpreprocess.sh
 
@@ -76,7 +77,7 @@ cleanup() {
 
 \rm -f -- *.o *.mod Makefile
 \rm -f -- input.nml.*_default
-all_programs=("${programs[@]}" "${model_programs[@]}" "${serial_programs[@]}" "${model_serial_programs[@]}")
+all_programs=("${programs[@]}" "${model_programs[@]}" "${serial_programs[@]}" "${model_serial_programs[@]}" "${test_programs[@]}" "${test_serial_programs[@]}")
 
 for p in ${all_programs[@]}; do 
   \rm -f -- $(basename $p)
@@ -256,6 +257,19 @@ function modelbuild() {
      $dartsrc
 }
 
+
+#-------------------------
+# Build test programs
+# looks in $DART/developer_tests/$TEST for {main}.f90
+# Arguments:
+#  program name
+#-------------------------
+function testbuild() {
+ $DART/build_templates/mkmf -x -a $DART $m -p $(basename $1) $DART/developer_tests/$TEST/$1.f90 \
+     $EXTRA \
+     $dartsrc
+}
+
 #-------------------------
 # Build executables
 #-------------------------
@@ -295,7 +309,7 @@ if [ ! -z "$single_prog" ] ; then # build a single program
 fi
 
 # if no single program argument, build everything
-n=$((${#programs[@]}+${#model_programs[@]}+${#serial_programs[@]}+${#model_serial_programs[@]}))
+n=$((${#programs[@]}+${#model_programs[@]}+${#serial_programs[@]}+${#model_serial_programs[@]}+${#test_programs[@]}))
 
 i=1
 
@@ -313,6 +327,13 @@ for p in ${model_programs[@]}; do
   modelbuild $p 
   ((i++))
 done
+
+for p in ${test_programs[@]}; do
+  echo "Building " $p " build " $i " of " $n
+  testbuild $p
+  ((i++))
+done
+
 
 # clean before building serial programs
 # if using mpi
@@ -334,6 +355,12 @@ done
 for p in ${model_serial_programs[@]}; do
   echo "Building " $p " build " $i " of " $n
   modelbuild $p  
+  ((i++))
+done
+
+for p in ${test_serial_programs[@]}; do
+  echo "Building " $p " build " $i " of " $n
+  testbuild $p
   ((i++))
 done
 

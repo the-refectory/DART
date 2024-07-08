@@ -8,13 +8,12 @@ source "$DART"/build_templates/buildfunctions.sh
 MODEL="none"
 EXTRA="$DART"/models/template/threed_model_mod.f90
 TEST=quad_interpolate
-dev_test=1
 LOCATION="threed_sphere"
 
 programs=(
 )
 
-serial_programs=(
+test_serial_programs=(
 test_quad_irreg_interp
 test_quad_reg_interp
 )
