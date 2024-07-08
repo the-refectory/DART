@@ -33,7 +33,6 @@ set -e
 EXTRA=""
 EXCLUDE=""
 TEST=""
-dev_test=0
 
 declare -a programs
 declare -a serial_programs
@@ -230,24 +229,19 @@ function dartbuild() {
 
 local program
 
-if [ $dev_test -eq 0 ]; then
-  #look in $program directory for {main}.f90
-  if [ $1 == "obs_diag" ]; then
-    program=$DART/assimilation_code/programs/obs_diag/$LOCATION
-  elif [ $1 == "streamflow_obs_diag" ]; then
-    program=$DART/assimilation_code/programs/obs_diag/streamflow
-  else
-    program=$DART/assimilation_code/programs/$1
-  fi
+#look in $program directory for {main}.f90
+if [ $1 == "obs_diag" ]; then
+  program=$DART/assimilation_code/programs/obs_diag/$LOCATION
+elif [ $1 == "streamflow_obs_diag" ]; then
+  program=$DART/assimilation_code/programs/obs_diag/streamflow
 else
-  # For developer tests {main}.f90 is in developer_tests
-  program=$DART/developer_tests/$TEST/$1.f90
+  program=$DART/assimilation_code/programs/$1
 fi
 
- $DART/build_templates/mkmf -x -a $DART $m -p $1 \
-     $dartsrc \
-     $EXTRA \
-     $program
+$DART/build_templates/mkmf -x -a $DART $m -p $1 \
+    $dartsrc \
+    $EXTRA \
+    $program
 }
 
 #-------------------------
