@@ -145,7 +145,7 @@ single_prog=$1
 #-------------------------
 function findsrc() {
 
-local core=$(find $DART/assimilation_code/modules)
+local core=$(find $DART/assimilation_code/modules -type d -name observations -prune -o -type f -name "*.f90" -print)
 local loc="$DART/assimilation_code/location/$LOCATION \
           $DART/assimilation_code/location/utilities/ \
           $DART/models/model_mod_tools/test_interpolate_$LOCATION.f90"
