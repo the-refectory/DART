@@ -145,7 +145,7 @@ single_prog=$1
 #-------------------------
 function findsrc() {
 
-local core=$(find $DART/assimilation_code/modules -type d -name observations -prune -o -type f -name "*.f90" -print)
+local core=$(find $DART/assimilation_code/modules)
 local loc="$DART/assimilation_code/location/$LOCATION \
           $DART/assimilation_code/location/utilities/ \
           $DART/models/model_mod_tools/test_interpolate_$LOCATION.f90"
@@ -162,13 +162,13 @@ local misc="$DART/models/utilities/ \
 # so adding individual files from assimilation_code/modules/observations
 
 # remove null/mpi from list
-local mpi="$DART"/assimilation_code/modules/utilities/mpi_utilities_mod.f90
-local mpif08="$DART"/assimilation_code/modules/utilities/mpif08_utilities_mod.f90
-local nullmpi="$DART"/assimilation_code/modules/utilities/null_mpi_utilities_mod.f90
-local nullwin="$DART"/assimilation_code/modules/utilities/null_win_mod.f90
-local craywin="$DART"/assimilation_code/modules/utilities/cray_win_mod.f90
-local nocraywin="$DART"/assimilation_code/modules/utilities/no_cray_win_mod.f90
-local no_cray_winf08="$DART"/assimilation_code/modules/utilities/no_cray_winf08_mod.f90
+local mpi="$DART"/assimilation_code/modules/mpi/mpi_utilities_mod.f90
+local mpif08="$DART"/assimilation_code/modules/mpi/mpif08_utilities_mod.f90
+local nullmpi="$DART"/assimilation_code/modules/mpi/null_mpi_utilities_mod.f90
+local nullwin="$DART"/assimilation_code/modules/mpi/null_win_mod.f90
+local craywin="$DART"/assimilation_code/modules/mpi/cray_win_mod.f90
+local nocraywin="$DART"/assimilation_code/modules/mpi/no_cray_win_mod.f90
+local no_cray_winf08="$DART"/assimilation_code/modules/mpi/no_cray_winf08_mod.f90
 
 if [ "$mpisrc" == "mpi" ]; then
 
@@ -212,9 +212,6 @@ done
 nuisance=(\
 "$DART/assimilation_code/modules/assimilation/assim_tools_mod.pf.f90"
 "$DART/assimilation_code/modules/assimilation/filter_mod.dopplerfold.f90"
-"$DART/assimilation_code/modules/utilities/null_restart_pnetcdf_mod.f90"
-"$DART/assimilation_code/modules/utilities/pnetcdf_utilities_mod.f90"
-"$DART/assimilation_code/modules/utilities/restart_pnetcdf_mod.f90"
 "$DART/models/bgrid_solo/fms_src/shared/time_manager/time_manager.f90"
 )
 
