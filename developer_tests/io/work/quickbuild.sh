@@ -15,9 +15,12 @@ EXTRA="$DART"/models/template/threed_model_mod.f90
 TEST="io"
 LOCATION="threed_sphere"
 
+test_serial_programs=(
+test_diag_structure
+)
+
 test_programs=(
 test_cf_conventions
-test_diag_structure
 test_read_write_restarts
 test_read_write_time
 test_state_structure
