@@ -128,12 +128,6 @@ public :: add_domain,                 &
           hyperslice_domain,          &
           has_unlimited_dim
 
-! diagnostic files
-!>@todo FIXME these routines are deprecated because we are no supporting 'diagnostic' 
-!> files, but they will likely be useful for the single file (multiple member) input.
-public :: create_diagnostic_structure, &
-          end_diagnostic_structure
-
 character(len=*), parameter :: source = 'state_structure_mod.f90'
 
 character(len=512) :: string1, string2, string3
@@ -2393,81 +2387,6 @@ if (state%num_domains + 1 > MAX_NUM_DOMS) then
 endif
 
 end subroutine assert_below_max_num_domains
-
-
-!-------------------------------------------------------------------------------
-!> Transform the state type to a domain that can be used to write diagnostic 
-!> files.
-!> One domain for the whole state. If there is more than one domain:
-!>   Need to change variable names
-!>   Need to change dimension names
-
-
-function create_diagnostic_structure() result (diag_id)
-
-integer :: diag_id
-
-integer :: i, j, k, var ! loop variables
-character(len=8)   :: dom_str = ''
-
-diag_id = diagnostic_domain
-
-if (diagnostic_initialized) return
-
-diagnostic_initialized = .true.
-
-! Find total number of variables in state
-state%domain(diag_id)%num_variables = 0
-do i = 1, state%num_domains
-   state%domain(diag_id)%num_variables = state%domain(diag_id)%num_variables + state%domain(i)%num_variables
-enddo
-
-allocate(state%domain(diag_id)%variable(state%domain(diag_id)%num_variables))
-
-! Loop around each domain in the state and add that domain's variables
-! to the diagnostic domain
-var = 0
-do i = 1, state%num_domains
-   do j = 1, state%domain(i)%num_variables
-      var = var + 1
-
-      ! Add variable to diagnostic domain
-      state%domain(diag_id)%variable(var) = state%domain(i)%variable(j)
-      ! Change variable name
-      if (state%num_domains > 1) then
-         write(dom_str, '(A, i2.2)') '_d', i
-         state%domain(diag_id)%variable(var)%varname = &
-             trim(state%domain(diag_id)%variable(var)%varname) // trim(dom_str)
-         do k = 1, state%domain(i)%variable(j)%numdims
-            state%domain(diag_id)%variable(var)%dimname(k) = &
-              trim(state%domain(diag_id)%variable(var)%dimname(k)) //trim(dom_str)
-         enddo
-      endif
-   enddo
-enddo
-
-state%domain(diag_id)%dom_size = sum(state%domain(1:state%num_domains)%dom_size)
-
-end function create_diagnostic_structure
-
-
-!-------------------------------------------------------------------------------
-!> Clean up the diagnostic structure
-
-
-subroutine end_diagnostic_structure()
-
-if (diagnostic_initialized) then
-
-   diagnostic_initialized = .false.
-   deallocate(state%domain(diagnostic_domain)%variable)
-   state%domain(diagnostic_domain)%num_variables = 0
-   state%domain(diagnostic_domain)%dom_size = 0
-
-endif
-
-end subroutine end_diagnostic_structure
-
 
 !-------------------------------------------------------------------------------
 !>

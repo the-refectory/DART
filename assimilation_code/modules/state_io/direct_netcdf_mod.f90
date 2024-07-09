@@ -91,8 +91,6 @@ use state_structure_mod,  only : get_num_variables, get_sum_variables,  &
                                  get_missing_value, get_add_offset, get_xtype, &
                                  get_has_FillValue, &
                                  get_index_start, get_index_end , get_num_dims, &
-                                 create_diagnostic_structure, &
-                                 end_diagnostic_structure, &
                                  has_unlimited_dim
 
 use io_filenames_mod,     only : get_restart_filename, inherit_copy_units, &
@@ -461,8 +459,6 @@ ncFileID%fname     = "notinuse"
 ncFileID%ncid      = -1
 ncFileID%Ntimes    = -1
 ncFileID%NtimesMax = -1
-
-call end_diagnostic_structure()
 
 end subroutine finalize_single_file_io
 
@@ -2263,8 +2259,6 @@ integer :: domain
 integer :: my_ncid
 character(len=NF90_MAX_NAME) :: dimname, varname
 
-! may not be needed
-ncFileID%diag_id = create_diagnostic_structure()
 my_ncid          = ncFileID%ncid
 
 !>@todo ONLY ONE DOMAIN FOR SINGLE FILE OUTPUT
@@ -2325,8 +2319,6 @@ character(len=256) :: fname
 character(len=NF90_MAX_NAME) :: dimname, varname
 
 call nc_check(nf90_Redef(ncFileID%ncid), 'write_model_attributes', 'nf90_Redef')
-
-ncFileID%diag_id = create_diagnostic_structure()
 
 my_ncid    = ncFileID%ncid
 fname      = ncFileID%fname
