@@ -32,7 +32,7 @@ module state_structure_mod
 !>
 !> There are optional arguments to add_domain_from_spec and add_domain_from_file. These
 !> are:
-!>     * kind_list     - dart kind of each variable
+!>     * qty_list     - dart qty of each variable
 !>     * clamp_vals    - upper and lower bounds each variable (missing_r8 for no clamping)
 !>     * update_list   - true/false. Write out the variable. Default is .true.
 !>
@@ -78,11 +78,11 @@ public :: add_domain,                 &
           get_num_domains,            &
           get_variable_size,          &
           get_variable_name,          &
-          get_kind_string,            &
-          get_kind_index,             &
-          get_varid_from_varname,     & 
-          get_varid_from_kind,        & 
-          get_varids_from_kind,       & 
+          get_qty_string,             &
+          get_qty_index,              &
+          get_varid_from_varname,     &  ! HK @todo why are these both public vs overloading?
+          get_varid_from_qty,         & 
+          get_varids_from_qty,        & 
           get_num_variables,          &
           get_num_dims,               &
           get_dim_lengths,            &
@@ -115,12 +115,8 @@ public :: add_domain,                 &
           get_short_name,             &
           get_has_missing_value,      &
           get_FillValue,              &
-          get_missing_value,          &
-          get_has_FillValue,          &
           get_add_offset,             &
           get_scale_factor,           &
-          set_dart_kinds,             &
-          set_clamping,               &
           set_update_list,            &
           add_dimension_to_variable,  &
           finished_adding_domain,     &
@@ -136,48 +132,6 @@ character(len=512) :: string1, string2, string3
 ! global variables
 !-------------------------------------------------------------------------------
 integer, parameter :: diagnostic_domain = MAX_NUM_DOMS + 1 ! Need to separate this from state
-
-!-------------------------------------------------------------------------------
-! Describes information pertaining to the IO portion of the variable information
-!-------------------------------------------------------------------------------
-type io_information
-   private
-
-   ! netcdf variable id 
-   integer :: varid ! HK Do you want one for reading, one for writing?
-   integer :: xtype     ! netCDF variable type (NF90_double, etc.)
-
-   ! clamping variables
-   logical  :: clamping = .false.    ! does variable need to be range-restricted before
-   real(r8) :: minvalue = missing_r8 ! min value for clamping
-   real(r8) :: maxvalue = missing_r8 ! max value for clamping
-   ! logical  :: out_of_range_fail = .false. ! is out of range fatal if range-checking?
-   
-   ! dimension information, including unlimited dimensions
-   integer :: io_numdims  = 0
-   integer, dimension(NF90_MAX_VAR_DIMS) :: io_dimIds
-   integer, dimension(NF90_MAX_VAR_DIMS) :: dimlens
-   
-   ! update information
-   logical :: update = .true. ! default to update variables
-   
-   ! CF-Conventions
-   character(len=NF90_MAX_NAME) :: units      = ' '
-   character(len=NF90_MAX_NAME) :: short_name = ' '
-   character(len=NF90_MAX_NAME) :: long_name  = ' '
-   logical  :: has_missing_value = .false.
-   logical  :: has_FillValue     = .false.
-   integer  :: missingINT   = MISSING_I   ! missing values
-   real(r4) :: missingR4    = MISSING_R4
-   real(r8) :: missingR8    = MISSING_R8
-   integer  :: spvalINT     = MISSING_I   ! fill values
-   real(r4) :: spvalR4      = MISSING_R4
-   real(r8) :: spvalR8      = MISSING_R8
-   real(r8) :: scale_factor = MISSING_R8
-   real(r8) :: add_offset   = MISSING_R8
-
-end type io_information
-
 
 !-------------------------------------------------------------------------------
 ! state_type -> domain_type -> variable_type
@@ -202,8 +156,8 @@ type variable_type
    integer,                      dimension(NF90_MAX_VAR_DIMS) :: dimlens
 
    ! dart information
-   integer :: dart_kind = -1
-   character(len=obstypelength) :: kind_string = 'unknown'
+   integer :: qty = -1
+   character(len=obstypelength) :: qty_string = 'unknown'
 
    type(io_information) :: io_info
 
@@ -224,9 +178,7 @@ type domain_type
    character(len=NF90_MAX_NAME), allocatable :: unique_dim_names(:)
    integer,                      allocatable :: unique_dim_length(:)
    integer,                      allocatable :: original_dim_IDs(:)
-   integer :: unlimDimId = -1 ! initialize to no unlimited dimension
-   logical :: has_unlimited = .false.
-
+   
    ! number of elements in the domain
    integer(i8) :: dom_size = 0_i8
 
@@ -247,14 +199,11 @@ type state_type
 
    ! domains or separate files
    integer           :: num_domains = 0
-   ! number of domains + 1 for diagnostic domain
-   type(domain_type) :: domain(MAX_NUM_DOMS + 1)
+   type(domain_type) :: domain(MAX_NUM_DOMS)
 
    ! size of the state vector
    integer(i8) :: model_size = 0_i8
 
-   !>@todo is this different to character(len=128) :: name?  Redundant?
-   !character(len=1024)  :: domain_name(MAX_NUM_DOMS)
 end type state_type
 
 !-------------------------------------------------------------------------------
@@ -262,14 +211,6 @@ end type state_type
 !-------------------------------------------------------------------------------
 type(state_type) :: state
 
-! This is used when dart writes the state to diagnostic files
-! It is a transformation of the state_type
-! One diagnostic file contains all domains.
-! It is not part of the state type
-logical :: diagnostic_initialized = .false.
-
-! debug flag for get_state_indices
-logical :: debug = .false.
 
 interface add_domain
    module procedure add_domain_blank
@@ -287,20 +228,7 @@ interface get_index_end
    module procedure get_index_end_from_varid
 end interface
 
-interface get_missing_value
-   module procedure get_missing_value_r8
-   module procedure get_missing_value_r4
-   module procedure get_missing_value_int
-end interface
-
-interface get_FillValue
-   module procedure get_spval_r8
-   module procedure get_spval_r4
-   module procedure get_spval_int
-end interface
-
 contains
-
 
 !-------------------------------------------------------------------------------
 !> Given an info_file, reads in a list var_names(num_vars) 
@@ -309,14 +237,12 @@ contains
 !> Returns a dom_id that can be used to harvest information of a particular domain
 !>
 !> Does this need to be a function or a subroutine?
-
-
-function add_domain_from_file(info_file, num_vars, var_names, kind_list, clamp_vals, update_list) result(dom_id)
+function add_domain_from_file(info_file, num_vars, var_names, qty_list, clamp_vals, update_list) result(dom_id)
 
 character(len=*), intent(in) :: info_file
 integer,          intent(in) :: num_vars
 character(len=*), intent(in) :: var_names(num_vars)
-integer,          intent(in), optional :: kind_list(num_vars)
+integer,          intent(in), optional :: qty_list(num_vars)
 real(r8),         intent(in), optional :: clamp_vals(num_vars, 2)
 logical,          intent(in), optional :: update_list(num_vars)
 integer :: dom_id
@@ -352,7 +278,7 @@ call load_unique_dim_info(dom_id)
 ! load up any cf-conventions if they exist
 call load_common_cf_conventions(state%domain(dom_id))
 
-if ( present(kind_list)  )  call set_dart_kinds (dom_id, num_vars, kind_list)
+if ( present(qty_list)  )  call set_dart_qtys (dom_id, num_vars, qty_list)
 if ( present(clamp_vals)  ) call set_clamping   (dom_id, num_vars, clamp_vals)
 if ( present(update_list) ) call set_update_list(dom_id, num_vars, update_list)
 
@@ -364,13 +290,11 @@ end function add_domain_from_file
 !> added to variables with add_dimension_to_variable.
 !>
 !> Returns a dom_id that can be used to harvest information of a particular domain
-
-
-function add_domain_from_spec(num_vars, var_names, kind_list, clamp_vals, update_list) result(dom_id)
+function add_domain_from_spec(num_vars, var_names, qty_list, clamp_vals, update_list) result(dom_id)
 
 integer,          intent(in) :: num_vars
 character(len=*), intent(in) :: var_names(num_vars)
-integer,          intent(in), optional :: kind_list(num_vars)
+integer,          intent(in), optional :: qty_list(num_vars)
 real(r8),         intent(in), optional :: clamp_vals(num_vars, 2)
 logical,          intent(in), optional :: update_list(num_vars)
 integer :: dom_id
@@ -396,7 +320,7 @@ do ivar = 1, num_vars
    state%domain(dom_id)%variable(ivar)%io_info%xtype = NF90_DOUBLE
 enddo
 
-if ( present(kind_list)   ) call set_dart_kinds (dom_id, num_vars, kind_list)
+if ( present(qty_list)   ) call set_dart_qtys (dom_id, num_vars, qty_list)
 if ( present(clamp_vals)  ) call set_clamping   (dom_id, num_vars, clamp_vals)
 if ( present(update_list) ) call set_update_list(dom_id, num_vars, update_list)
 
@@ -437,8 +361,8 @@ allocate(state%domain(dom_id)%original_dim_IDs(3))
 allocate(state%domain(dom_id)%unique_dim_names(3))
 allocate(state%domain(dom_id)%unique_dim_length(3))
 
-state%domain(dom_id)%unique_dim_names(1)  = 'location'
-state%domain(dom_id)%unique_dim_names(2)  = 'member'
+state%domain(dom_id)%unique_dim_names(1)  = 'location' 
+state%domain(dom_id)%unique_dim_names(2)  = 'member' !HK @todo this is not good hardcoding member and time
 state%domain(dom_id)%unique_dim_names(3)  = 'time'
 
 state%domain(dom_id)%unique_dim_length(1) =  domain_size
@@ -460,9 +384,9 @@ state%domain(dom_id)%variable(1)%index_start = domain_offset + 1
 state%domain(dom_id)%variable(1)%index_end   = domain_offset + domain_size
 
 !>@todo FIXME : what is a good default for kind_string
-state%domain(dom_id)%variable(1)%kind_string = 'QTY_STATE_VARIABLE'
+state%domain(dom_id)%variable(1)%qty_string = 'QTY_STATE_VARIABLE'
 state%domain(dom_id)%variable(1)%dart_kind   = &
-       get_index_for_quantity(state%domain(dom_id)%variable(1)%kind_string)
+       get_index_for_quantity(state%domain(dom_id)%variable(1)%qty_string)
 
 state%domain(dom_id)%variable(1)%dimname(1) = 'location'
 state%domain(dom_id)%variable(1)%dimname(2) = 'member'
@@ -488,8 +412,6 @@ end function add_domain_blank
 
 !-------------------------------------------------------------------------------
 !> Load metadata from netcdf file info state_strucutre
-
-
 subroutine load_state_variable_info(domain, domain_index)
 
 type(domain_type), intent(inout) :: domain
@@ -728,220 +650,6 @@ deallocate(array_of_dimids, array_of_names, array_of_lengths, array_of_indices, 
 end subroutine load_unique_dim_info
 
 !-------------------------------------------------------------------------------
-!> Check to see if the template file has any of the common cf-conventions
-!>
-!>  * units
-!>  * short_name
-!>  * long_name
-!>  * short_name
-!>  * _FillValue
-!>  * missing_value
-!>  * add_offset
-!>  * scale_factor
-!>
-!> If they exist, load them up into the state structure.
-!-------------------------------------------------------------------------------
-
-subroutine load_common_cf_conventions(domain)
-
-type(domain_type), intent(inout) :: domain
-
-integer :: ivar
-integer :: nvars
-
-! netcdf variables
-integer  :: ret, ncid, VarID
-integer  :: var_xtype
-integer  :: cf_spvalINT
-real(r4) :: cf_spvalR4
-real(digits12) :: cf_spvalR8
-real(digits12) :: cf_scale_factor, cf_add_offset
-character(len=512) :: ncFilename
-character(len=NF90_MAX_NAME) :: var_name
-character(len=NF90_MAX_NAME) :: cf_long_name, cf_short_name, cf_units
-
-character(len=*), parameter :: routine = 'load_common_cf_conventions'
-
-ncFilename = domain%info_file
-
-ret = nf90_open(ncFilename, NF90_NOWRITE, ncid)
-call nc_check(ret, routine,'nf90_open '//trim(ncFilename))
-
-! determine attributes of each variable in turn
-
-nvars = domain%num_variables
-
-do ivar = 1, nvars
-   var_name = domain%variable(ivar)%varname
-
-   ret = nf90_inq_varid(ncid, trim(var_name), VarID)
-   call nc_check(ret, routine, 'inq_varid '//trim(var_name))
-
-   ! If the short_name, long_name and/or units attributes are set, get them.
-   ! They are not REQUIRED by DART but are nice to keep around if they are present.
-
-   if( nf90_inquire_attribute(    ncid, VarID, 'long_name') == NF90_NOERR ) then
-      ret = nf90_get_att(ncid, VarID, 'long_name' , cf_long_name)
-      call nc_check(ret, routine, 'get_att long_name '//trim(var_name))
-      domain%variable(ivar)%io_info%long_name = cf_long_name
-   endif
-
-   if( nf90_inquire_attribute(    ncid, VarID, 'short_name') == NF90_NOERR ) then
-      ret = nf90_get_att(ncid, VarID, 'short_name' , cf_short_name)
-      call nc_check(ret, routine, 'get_att short_name '//trim(var_name))
-      domain%variable(ivar)%io_info%short_name = cf_short_name
-   endif
-
-   if( nf90_inquire_attribute(    ncid, VarID, 'units') == NF90_NOERR )  then
-      ret = nf90_get_att(ncid, VarID, 'units' , cf_units)
-      call nc_check(ret, routine, 'get_att units '//trim(var_name))
-      domain%variable(ivar)%io_info%units = cf_units
-   endif
-
-   ! Saving any FillValue, missing_value attributes ...
-   ! Also stuff them into the 'r8' slots to facilitate simpler clamp_variable
-   ! implementation. (Since we coerce the DART state to 'r8')
-
-   var_xtype = domain%variable(ivar)%io_info%xtype
-   select case (var_xtype)
-      case ( NF90_INT )
-          ! Sometimes the attributes are specified as GLOBAL attributes
-          ret = nf90_get_att(ncid, NF90_GLOBAL, '_FillValue',    cf_spvalINT)
-          if (ret == NF90_NOERR) then
-             domain%variable(ivar)%io_info%spvalINT            = cf_spvalINT
-             domain%variable(ivar)%io_info%spvalR8             = real(cf_spvalINT,r8)
-             domain%variable(ivar)%io_info%has_FillValue       = .true.
-          endif
-          ret = nf90_get_att(ncid, NF90_GLOBAL, 'missing_value', cf_spvalINT)
-          if (ret == NF90_NOERR) then
-             domain%variable(ivar)%io_info%missingINT          = cf_spvalINT
-             domain%variable(ivar)%io_info%spvalR8             = real(cf_spvalINT,r8)
-             domain%variable(ivar)%io_info%has_missing_value   = .true.
-          endif
-          ! Usually the attributes are specified as variable attributes
-          ret = nf90_get_att(ncid, VarID, '_FillValue',          cf_spvalINT)
-          if (ret == NF90_NOERR) then
-             domain%variable(ivar)%io_info%spvalINT            = cf_spvalINT
-             domain%variable(ivar)%io_info%spvalR8             = real(cf_spvalINT,r8)
-             domain%variable(ivar)%io_info%has_FillValue       = .true.
-          endif
-          ret = nf90_get_att(ncid, VarID, 'missing_value',       cf_spvalINT)
-          if (ret == NF90_NOERR) then
-             domain%variable(ivar)%io_info%missingINT          = cf_spvalINT
-             domain%variable(ivar)%io_info%missingR8           = real(cf_spvalINT,r8)
-             domain%variable(ivar)%io_info%has_missing_value   = .true.
-          endif
-
-      case ( NF90_FLOAT )
-          ret = nf90_get_att(ncid, NF90_GLOBAL, '_FillValue',    cf_spvalR4)
-          if (ret == NF90_NOERR) then
-             domain%variable(ivar)%io_info%spvalR4             = cf_spvalR4
-             domain%variable(ivar)%io_info%spvalR8             = real(cf_spvalR4,r8)
-             domain%variable(ivar)%io_info%has_FillValue       = .true.
-          endif
-          ret = nf90_get_att(ncid, NF90_GLOBAL, 'missing_value', cf_spvalR4)
-          if (ret == NF90_NOERR) then
-             domain%variable(ivar)%io_info%missingR4           = cf_spvalR4
-             domain%variable(ivar)%io_info%spvalR8             = real(cf_spvalR4,r8)
-             domain%variable(ivar)%io_info%has_missing_value   = .true.
-          endif
-          ret = nf90_get_att(ncid, VarID, '_FillValue',          cf_spvalR4)
-          if (ret == NF90_NOERR) then
-             domain%variable(ivar)%io_info%spvalR4             = cf_spvalR4
-             domain%variable(ivar)%io_info%spvalR8             = real(cf_spvalR4,r8)
-             domain%variable(ivar)%io_info%has_FillValue       = .true.
-          endif
-          ret = nf90_get_att(ncid, VarID, 'missing_value',       cf_spvalR4)
-          if (ret == NF90_NOERR) then
-             domain%variable(ivar)%io_info%missingR4           = cf_spvalR4
-             domain%variable(ivar)%io_info%missingR8           = real(cf_spvalR4,r8)
-             domain%variable(ivar)%io_info%has_missing_value   = .true.
-          endif
-
-      case ( NF90_DOUBLE )
-
-          ! If r8 = r4, 
-          ! the missing_value must be present in both missingR4 and missingR8 
-          ! ditto for _FillValue.
-          ! This satisfies the overloaded operator 'get_missing_value, get_FillValue'
-
-          ret = nf90_get_att(ncid, NF90_GLOBAL, '_FillValue',    cf_spvalR8)
-          if (ret == NF90_NOERR) then
-             domain%variable(ivar)%io_info%spvalR4             = cf_spvalR8
-             domain%variable(ivar)%io_info%spvalR8             = cf_spvalR8
-             domain%variable(ivar)%io_info%has_FillValue       = .true.
-          endif
-          ret = nf90_get_att(ncid, NF90_GLOBAL, 'missing_value', cf_spvalR8)
-          if (ret == NF90_NOERR) then
-             domain%variable(ivar)%io_info%missingR4           = cf_spvalR8
-             domain%variable(ivar)%io_info%missingR8           = cf_spvalR8
-             domain%variable(ivar)%io_info%has_missing_value   = .true.
-          endif
-          ret = nf90_get_att(ncid, VarID, '_FillValue',          cf_spvalR8)
-          if (ret == NF90_NOERR) then
-             domain%variable(ivar)%io_info%spvalR4             = cf_spvalR8
-             domain%variable(ivar)%io_info%spvalR8             = cf_spvalR8
-             domain%variable(ivar)%io_info%has_FillValue       = .true.
-          endif
-          ret = nf90_get_att(ncid, VarID, 'missing_value',       cf_spvalR8)
-          if (ret == NF90_NOERR) then
-             domain%variable(ivar)%io_info%missingR4           = cf_spvalR8
-             domain%variable(ivar)%io_info%missingR8           = cf_spvalR8
-             domain%variable(ivar)%io_info%has_missing_value   = .true.
-          endif
-
-      case DEFAULT
-         write(string1,*) ' unsupported netcdf variable type : ', var_xtype
-         call error_handler(E_ERR,routine,string1,source)
-   end select
-
-   ! If the variable has one or the other, no problem.
-   ! If the variable has both _FillValue and missing_value attributes, the
-   ! values must be the same or we are lost. DART only supports one missing
-   ! value code. When we go to write, we have no way of knowing which value
-   ! to use as a replacement for the DART missing code.
-
-   if ( domain%variable(ivar)%io_info%has_missing_value .and. &
-        domain%variable(ivar)%io_info%has_FillValue ) then
-
-      if ( domain%variable(ivar)%io_info%missingR8 /= &
-           domain%variable(ivar)%io_info%spvalR8 ) then
-
-         write(string1, *) trim(var_name)//' missing_value /= _FillValue '
-         write(string2,*) 'missing_value is ', domain%variable(ivar)%io_info%missingR8 
-         write(string3,*) '_FillValue    is ', domain%variable(ivar)%io_info%spvalR8
-         call error_handler(E_ERR,'set_dart_missing_value:',string1, &
-                source, text2=string2, text3=string3)
-      endif
-
-   endif
-
-   !>@todo FIXME : Not supporting scale factor or offset at the moment, so just error.
-   !>              To fully support netCDF I/O we need to
-   !>              pack and unpack the variable if these attributes exist.
-   if (nf90_get_att(ncid, VarID, 'scale_factor',   cf_scale_factor) == NF90_NOERR) then
-      domain%variable(ivar)%io_info%scale_factor = cf_scale_factor
-      write(string1,*) 'scale_factor not supported at the moment'
-      write(string2,*) 'contact DART if you would like to get this to work'
-      call error_handler(E_ERR,routine,string1,source,text2=string2)
-   endif
-
-   if (nf90_get_att(ncid, VarID, 'add_offset', cf_add_offset) == NF90_NOERR) then
-      domain%variable(ivar)%io_info%add_offset = cf_add_offset
-      write(string1,*) 'add_offset not supported at the moment'
-      write(string2,*) 'contact DART if you would like to get this to work'
-      call error_handler(E_ERR,routine,string1,source,text2=string2)
-   endif
-
-enddo
-
-! close netcdf file
-ret = nf90_close(ncid)
-call nc_check(ret, routine, 'nf90_close', trim(ncFilename))
-
-end subroutine load_common_cf_conventions
-
-!-------------------------------------------------------------------------------
 !> TIEGCM, the top level of each variable is the boundary condition.
 !> So the top level should not be part of the state.
 !> How general does this need to be?  At the moment it is just a hack to
@@ -949,7 +657,6 @@ end subroutine load_common_cf_conventions
 !>
 !> This slicing needs to be on the the DART state structure, not the io netcdf
 !> structure.
-
 subroutine hyperslice_domain(dom_id, dim_name, new_length)
 
 integer,          intent(in) :: dom_id
@@ -1013,8 +720,6 @@ state%model_size = orig_model_size - orig_domain_size + domain_size
 end subroutine hyperslice_domain
 !-------------------------------------------------------------------------------
 !> Returns the number of domains being used in the state structure
-
-
 function get_num_domains()
 
 integer :: get_num_domains
@@ -1024,78 +729,41 @@ get_num_domains = state%num_domains
 end function get_num_domains
 
 !-------------------------------------------------------------------------------
-!> Return whether the domain has an unlimited dimension
-
-function has_unlimited_dim(dom_id)
-
-integer, intent(in) :: dom_id
-logical :: has_unlimited_dim
-
-has_unlimited_dim = state%domain(dom_id)%has_unlimited
-
-end function has_unlimited_dim
-
-!-------------------------------------------------------------------------------
 !> Returns the number of elements in the domain
-
-
 function get_domain_size(dom_id)
 
 integer, intent(in) :: dom_id
 integer(i8) :: get_domain_size
 
-call check_domain_id(dom_id,'get_domain_size')
-
 get_domain_size = state%domain(dom_id)%dom_size
 
 end function get_domain_size
 
-
 !-------------------------------------------------------------------------------
 !> Returns the number of variables in the domain
-
-
 function get_num_variables(dom_id)
 
 integer, intent(in) :: dom_id ! domain
 integer :: get_num_variables
 
-call check_domain_id(dom_id,'get_num_variables')
-
 get_num_variables = state%domain(dom_id)%num_variables
 
 end function get_num_variables
 
-
 !-------------------------------------------------------------------------------
 !> Returns the size of a variable in a specific domain
-
-
 function get_variable_size(dom_id, ivar)
 
 integer, intent(in) :: dom_id ! domain
 integer, intent(in) :: ivar ! variable
 integer :: get_variable_size
 
-write(string1,*)'get_variable_size:requesting size of variable # ',ivar, ' for domain ',dom_id
-call check_domain_id(dom_id, string1)
-
-if (state%domain(dom_id)%num_variables < ivar) then
-   write(string1,'(''domain '',i4,'' has '',i6,'' variable(s).'')') dom_id, &
-                     state%domain(dom_id)%num_variables
-   write(string2,*)'requested size of variable # ',ivar
-   call error_handler(E_ERR,'get_variable_size',string1,source,text2=string2)
-endif
-
 get_variable_size = state%domain(dom_id)%variable(ivar)%var_size
 
 end function get_variable_size
 
-
 !-------------------------------------------------------------------------------
 !> Returns the number of dimensions for a variable
-
-
 function get_num_dims(dom_id, ivar)
 
 integer, intent(in) :: dom_id ! domain
@@ -1106,11 +774,9 @@ get_num_dims = state%domain(dom_id)%variable(ivar)%numdims
 
 end function get_num_dims
 
-
 !-------------------------------------------------------------------------------
 !> Return and array containing the dimension lengths, for the DART state
 !> excluding the UNLIMITED dim
-
 function get_dim_lengths(dom_id, ivar)
 
 integer, intent(in) :: dom_id ! domain
@@ -1125,11 +791,8 @@ get_dim_lengths(1:num_dims) = state%domain(dom_id)%variable(ivar)%dimlens(1:num_
 
 end function get_dim_lengths
 
-
 !-------------------------------------------------------------------------------
 !> Returns the variable name
-
-
 function get_variable_name(dom_id, ivar)
 
 integer, intent(in) :: dom_id ! domain
@@ -1140,27 +803,8 @@ get_variable_name = state%domain(dom_id)%variable(ivar)%varname
 
 end function get_variable_name
 
-
-!-------------------------------------------------------------------------------
-! Should you even use this?
-!>@todo no corresponding 'get', no way to check if it worked, is new_varid valid?
-
-
-subroutine set_var_id(dom_id, ivar, new_varid)
-
-integer, intent(in) :: dom_id ! domain
-integer, intent(in) :: ivar ! variable
-integer, intent(in) :: new_varid
-
-state%domain(dom_id)%variable(ivar)%io_info%varid = new_varid
-
-end subroutine set_var_id
-
-
 !-------------------------------------------------------------------------------
 !> Returns the dimension name
-
-
 function get_dim_name(dom_id, ivar, jdim)
 
 integer, intent(in) :: dom_id ! domain
@@ -1172,11 +816,8 @@ get_dim_name = state%domain(dom_id)%variable(ivar)%dimname(jdim)
 
 end function get_dim_name
 
-
 !-------------------------------------------------------------------------------
 !> Return dimension length
-
-
 function get_dim_length(dom_id, ivar, jdim)
 
 integer, intent(in) :: dom_id ! domain
@@ -1189,108 +830,7 @@ get_dim_length = state%domain(dom_id)%variable(ivar)%dimlens(jdim)
 end function get_dim_length
 
 !-------------------------------------------------------------------------------
-!> Return io dimension length
-
-function get_io_dim_length(dom_id, ivar, jdim)
-integer, intent(in) :: jdim ! dimension
-integer :: get_io_dim_length
-
-integer, intent(in) :: dom_id ! domain
-integer, intent(in) :: ivar ! variable
-
-get_io_dim_length = state%domain(dom_id)%variable(ivar)%io_info%dimlens(jdim)
-
-end function get_io_dim_length
-
-
-!-------------------------------------------------------------------------------
-!> Return the number of dimensions in a domain
-!> Repeat dimensions are allowed
-
-
-function get_domain_num_dims(dom_id)
-
-integer, intent(in) :: dom_id ! domain identifier
-integer :: get_domain_num_dims
-
-integer :: ivar, num_vars
-
-num_vars = state%domain(dom_id)%num_variables
-
-get_domain_num_dims = 0
-
-do ivar = 1, num_vars
-  get_domain_num_dims =  get_domain_num_dims + &
-                            state%domain(dom_id)%variable(ivar)%io_info%io_numdims
-enddo
-
-end function get_domain_num_dims
-
-
-!-------------------------------------------------------------------------------
-!> Return the number of unique dimensions
-
-
-function get_io_num_unique_dims(dom_id)
-
-integer, intent(in) :: dom_id ! domain identifier
-integer :: get_io_num_unique_dims
-
-get_io_num_unique_dims = state%domain(dom_id)%num_unique_dims
-
-end function get_io_num_unique_dims
-
-
-!-------------------------------------------------------------------------------
-!> Return the unique dimension names
-
-
-function get_io_unique_dim_name(dom_id, jdim)
-
-integer, intent(in) :: dom_id ! domain identifier
-integer, intent(in) :: jdim ! index into array, not connected to dimId
-character(len=NF90_MAX_NAME) :: get_io_unique_dim_name
-
-get_io_unique_dim_name = state%domain(dom_id)%unique_dim_names(jdim)
-
-end function get_io_unique_dim_name
-
-
-!-------------------------------------------------------------------------------
-!> Return the unique dimension lengths
-
-
-function get_io_unique_dim_length(dom_id, jdim)
-
-integer, intent(in) :: dom_id ! domain identifier
-integer, intent(in) :: jdim ! index into array, not connected to dimId
-integer :: get_io_unique_dim_length
-
-get_io_unique_dim_length = state%domain(dom_id)%unique_dim_length(jdim)
-
-end function get_io_unique_dim_length
-
-
-!-------------------------------------------------------------------------------
-!> Return the original dimension ID from the source (blank,file, or spec)
-!> This is intentionally not a public routine and is intended to be used
-!> to summarize what is being used from the source (state_structure_info).
-
-function get_original_dim_ID(dom_id, jdim)
-
-integer, intent(in) :: dom_id
-integer, intent(in) :: jdim
-integer :: get_original_dim_ID
-
-get_original_dim_ID = state%domain(dom_id)%original_dim_IDs(jdim)
-
-end function get_original_dim_ID
-
-
-!-------------------------------------------------------------------------------
 !> Returns the starting dart index for variable
-
-
 function get_index_start_from_varname(dom_id, varname)
 
 integer,          intent(in) :: dom_id
@@ -1305,11 +845,8 @@ get_index_start_from_varname = state%domain(dom_id)%variable(var_id)%index_start
 
 end function get_index_start_from_varname
 
-
 !-------------------------------------------------------------------------------
 !> Returns the starting dart index for variable
-
-
 function get_index_start_from_varid(dom_id, ivar)
 
 integer, intent(in) :: dom_id
@@ -1320,11 +857,8 @@ get_index_start_from_varid = state%domain(dom_id)%variable(ivar)%index_start
 
 end function get_index_start_from_varid
 
-
 !-------------------------------------------------------------------------------
 !> Returns the starting dart index for variable
-
-
 function get_index_end_from_varname(dom_id, varname)
 
 integer,          intent(in) :: dom_id
@@ -1339,11 +873,8 @@ get_index_end_from_varname = state%domain(dom_id)%variable(var_id)%index_end
 
 end function get_index_end_from_varname
 
-
 !-------------------------------------------------------------------------------
 !> Returns the ending dart index for variable
-
-
 function get_index_end_from_varid(dom_id, ivar)
 
 integer, intent(in) :: dom_id
@@ -1354,40 +885,9 @@ get_index_end_from_varid= state%domain(dom_id)%variable(ivar)%index_end
 
 end function get_index_end_from_varid
 
-
-!-------------------------------------------------------------------------------
-!> Return unlimited dimension id
-
-
-function get_unlimited_dimid(dom_id)
-
-integer, intent(in) :: dom_id
-integer :: get_unlimited_dimid
-
-get_unlimited_dimid = state%domain(dom_id)%unlimDimId
-
-end function get_unlimited_dimid
-
-
-!-------------------------------------------------------------------------------
-!> Adding space for an unlimited dimension in the dimesion arrays
-!> The unlimited dimension needs to be last in the list for def_var
-!>@todo this is a terrible name. The unlimited dimension can be for anything, not just time.
-
-
-subroutine add_time_unlimited(unlimited_dimId)
-
-integer, intent(in)  :: unlimited_dimId
-
-call error_handler(E_ERR, 'add_time_unlimited', 'routine does not exist')
-
-end subroutine add_time_unlimited
-
-
 !-------------------------------------------------------------------------------
 !> Returns the number of variables below start_var
-
-
+!> HK @todo direct_netcdf_mod is using this for io
 function get_sum_variables_below(start_var, dom_id)
 
 integer, intent(in) :: start_var
@@ -1413,8 +913,6 @@ end function get_sum_variables_below
 
 !-------------------------------------------------------------------------------
 !> Returns the number of elements in range of start_var and end_var
-
-
 function get_sum_variables(start_var, end_var, dom_id)
 
 integer, intent(in) :: start_var, end_var
@@ -1432,11 +930,9 @@ enddo
 
 end function get_sum_variables
 
-
 !-------------------------------------------------------------------------------
 !> Given a dart state index, return the iloc, jloc, kloc location of the local variable
-
-
+!>  HK @todo assuming 1d,2d,3d variables
 subroutine get_model_variable_indices(index_in, iloc, jloc, kloc, var_id,  dom_id, kind_index, kind_string)
 
 integer(i8),      intent(in)  :: index_in
@@ -1476,8 +972,6 @@ FindVariable : do idom = 1, ndomains
          local_ind = index_abs - index_start
          varid     = ivar
          domid     = idom
-         if(debug) print*, 'index_start, index_end', index_start, index_end 
-
          exit FindVariable
 
       endif
@@ -1493,9 +987,7 @@ ndims = get_num_dims(domid, varid)
 allocate(dsize(ndims))
 dsize = get_dim_lengths(domid,varid)
 
-if(debug) print*, 'ndims', ndims, 'sizes', dsize(1:ndims)
-
-! unfold from variable index
+! unfold from variable index 
 if (ndims == 1) then
    kloc = 1
    jloc = 1
@@ -1515,25 +1007,13 @@ else
                       source, text2=string2)
 endif
 
-if (debug) then
-   write(*,'(A)')            '---------------------------------------------'
-   write(*,'(A, I10)')       'index_in = ', index_in
-   write(*,'(A, I2, A, I2)') '   domid = ', domid, '   varid = ', varid
-   write(*,'(A, 3I10, A)')   '   (i, j, k) = (', iloc, jloc, kloc, ')'
-   write(*,'(A)')            '---------------------------------------------'
-endif
+if (present(var_id)) var_id = varid
 
-if (present(var_id)) &
-   var_id = varid
+if (present(dom_id)) dom_id = domid
 
-if (present(dom_id)) &
-   dom_id = domid
+if (present(kind_string)) kind_string = get_kind_string(domid,varid)
 
-if (present(kind_string)) &
-   kind_string = get_kind_string(domid,varid)
-
-if (present(kind_index)) &
-   kind_index = get_kind_index(domid,varid)
+if (present(kind_index)) kind_index = get_kind_index(domid,varid)
 
 deallocate(dsize)
 
@@ -1542,8 +1022,6 @@ end subroutine get_model_variable_indices
 
 !-------------------------------------------------------------------------------
 !> Returns the dart index from local variable indices
-
-
 function get_dart_vector_index(iloc, jloc, kloc, dom_id, var_id)
 
 integer, intent(in) :: iloc, jloc, kloc
@@ -1574,95 +1052,12 @@ endif
 
 end function get_dart_vector_index
 
-
-!-------------------------------------------------------------------------------
-!> Set clamping bounds for domain variables.
-!>   missing_r8 values are used to set no-clamping
-!>   clamp_vals(ivar,1) must be the minimum value
-!>   clamp_vals(ivar,2) must be the maximum value
-
-
-subroutine set_clamping(dom_id, num_vars, clamp_vals)
-
-integer,  intent(in) :: dom_id
-integer,  intent(in) :: num_vars
-real(r8), intent(in) :: clamp_vals(num_vars, 2)
-
-real(r8) :: min_value, max_value
-integer  :: ivar
-
-do ivar = 1, num_vars
-
-   min_value = clamp_vals(ivar, 1)
-   if (min_value /= missing_r8) then 
-      state%domain(dom_id)%variable(ivar)%io_info%clamping = .true.   
-      state%domain(dom_id)%variable(ivar)%io_info%minvalue = min_value
-   endif
-
-   max_value = clamp_vals(ivar, 2)
-   if (max_value /= missing_r8) then 
-      state%domain(dom_id)%variable(ivar)%io_info%clamping = .true.   
-      state%domain(dom_id)%variable(ivar)%io_info%maxvalue = max_value
-   endif
-
-enddo
-
-end subroutine set_clamping
-
-
-!-------------------------------------------------------------------------------
-!> Return clamping maximum for a given variable
-
-
-function get_io_clamping_maxval(dom_id, var_id)
-
-integer, intent(in) :: dom_id
-integer, intent(in) :: var_id
-real(r8) :: get_io_clamping_maxval
-
-get_io_clamping_maxval= state%domain(dom_id)%variable(var_id)%io_info%maxvalue
-
-end function get_io_clamping_maxval
-
-
-!-------------------------------------------------------------------------------
-!> Return clamping minimum for a given variable
-
-
-function get_io_clamping_minval(dom_id, var_id)
-
-integer, intent(in) :: dom_id
-integer, intent(in) :: var_id
-real(r8) :: get_io_clamping_minval
-
-get_io_clamping_minval= state%domain(dom_id)%variable(var_id)%io_info%minvalue
-
-end function get_io_clamping_minval
-
-
-!-------------------------------------------------------------------------------
-!> Returns whether a variable should be clamped or not
-
-
-function do_io_clamping(dom_id, var_id)
-
-integer, intent(in) :: dom_id ! domain identifier
-integer, intent(in) :: var_id
-logical :: do_io_clamping
-
-do_io_clamping = state%domain(dom_id)%variable(var_id)%io_info%clamping
-
-end function do_io_clamping
-
-
 !-------------------------------------------------------------------------------
 !> Used to add dimensions to a variable.
 !> This allows the model to add meta data to state structure so a netcdf restart 
 !> can be created which has the T,U,V etc. from a cold start (no existing netcdf
 !> info file) e.g. the bgrid model. The number of variables has already been given 
 !> in add_domain_from_spec.
-
-
 subroutine add_dimension_to_variable(dom_id, var_id, dim_name, dim_size)
 
 integer,          intent(in) :: dom_id
@@ -1699,8 +1094,6 @@ end subroutine add_dimension_to_variable
 
 !-------------------------------------------------------------------------------
 !> Finalize routine when using add_domain_from_spec
-
-
 subroutine finished_adding_domain(dom_id)
 
 integer, intent(in) :: dom_id ! domain identifier
@@ -1761,156 +1154,10 @@ enddo
 state%model_size = state%model_size + get_domain_size(dom_id)
 
 end subroutine finished_adding_domain
-
  
 !-------------------------------------------------------------------------------
-!> Print information in the state structure
-!>@todo rename to print_domain_info or something
-
-subroutine state_structure_info(dom_id)
-
-integer, intent(in) :: dom_id ! domain identifier
-
-integer :: ivar, jdim
-integer :: num_vars
-integer :: num_dims
-integer :: array_ids(NF90_MAX_VAR_DIMS)
-integer :: array_lengths(NF90_MAX_VAR_DIMS)
-character(len=NF90_MAX_NAME) :: dim_name
-integer  :: missingINT, spval_int
-real(r4) :: missingR4,  spval_r4
-real(r8) :: missingR8,  spval_r8
-logical  :: has_missing, has_Fill
-
-if ( .not. do_output() ) return
-
-call check_domain_id(dom_id,'state_structure_info')
-
-write(*,*) ' '
-write(*,*) 'Reporting on domain # ',dom_id
-write(*,*) 'Created by method "', trim(state%domain(dom_id)%method),'"'
-if ( state%domain(dom_id)%info_file /= 'NULL' ) &
-write(*,*) 'Origin file "', trim(state%domain(dom_id)%info_file), '"'
-
-! summarize all the dimensions used by this domain
-
-num_dims = get_io_num_unique_dims(dom_id)
-write(*,'('' Number of dimensions  : '',I2)') num_dims
-write(*,'('' unlimdimid            : '',I2)') get_unlimited_dimid(dom_id)
-do jdim = 1, num_dims
-   write(*,200) jdim, &
-             get_io_unique_dim_length(dom_id,jdim), &
-        trim(get_io_unique_dim_name(  dom_id,jdim))
-enddo
-write(*,*)
-
-200 format(4x,i2,', length = ',I8,', name = "',A,'"')
-201 format(4x,i2,':         ',2x,'  length = ',I8,', name = "',A,'"')
-202 format(4x,i2,':         ',2x,'  ID = ',I8,', length = ',I8,', name = "',A,'"')
-
-! report on each variable in this domain
-
-num_vars = get_num_variables(dom_id)
-
-do ivar = 1, num_vars
-   write(*,*)         'VARNAME     : ', trim(get_variable_name(dom_id,ivar))
-   write(*,*)         'var_size    : ', get_variable_size(dom_id,ivar)
-   write(*,*)         'index_start : ', get_index_start(dom_id,ivar)
-   write(*,*)         'index_end   : ', get_index_end(dom_id,ivar)
-   write(*,*)         'quantity    : ', get_kind_string(dom_id,ivar)
-   write(*,'(A,I3)') ' qty_index   : ', get_kind_index(dom_id,ivar)
-   write(*,*)         'clamping    : ', do_io_clamping(dom_id,ivar)
-   write(*,*)         'minvalue    : ', get_io_clamping_minval(dom_id,ivar)
-   write(*,*)         'maxvalue    : ', get_io_clamping_maxval(dom_id,ivar)
-   write(*,*)         'update      : ', do_io_update(dom_id,ivar)
-   write(*,*)         'unlimdimid  : ', get_unlimited_dimid(dom_id)
-
-   num_dims = get_num_dims(dom_id,ivar)
-   write(*,'('' numdims     : '',I1)') num_dims
-
-   array_lengths(1:num_dims) = get_dim_lengths(dom_id,ivar)
-   do jdim = 1, num_dims
-       dim_name = get_dim_name(dom_id, ivar, jdim)
-       write(*,201) jdim, array_lengths(jdim), trim(dim_name)
-   enddo
-
-   ! Report on the native dimensions in the original netCDF file
-
-   num_dims = get_io_num_dims(dom_id,ivar)
-   write(*,'('' io_numdims  : '',I1)') num_dims
-
-   array_ids(1:num_dims)     = get_io_dim_ids(dom_id,ivar)
-   array_lengths(1:num_dims) = get_io_dim_lengths(dom_id,ivar)
-   do jdim = 1, num_dims
-       dim_name = get_dim_name(dom_id, ivar, jdim)
-       write(*,202) jdim, array_ids(jdim), array_lengths(jdim), trim(dim_name)
-   enddo
-
-   if ( state%domain(dom_id)%info_file /= 'NULL' ) then
-      write(*,*) 'units             : ', trim(get_units(dom_id,ivar))
-      write(*,*) 'short_name        : ', trim(get_short_name(dom_id,ivar))
-      write(*,*) 'long_name         : ', trim(get_long_name(dom_id,ivar))
-      write(*,*) 'has_missing_value : ', get_has_missing_value(dom_id,ivar)
-      write(*,*) 'has_FillValue     : ', get_has_FillValue(dom_id,ivar)
-
-      has_missing = get_has_missing_value(dom_id,ivar)
-      has_Fill    = get_has_FillValue(    dom_id,ivar)
-
-      select case (get_xtype(dom_id,ivar))
-         case (NF90_INT)
-            write(*,*) 'xtype             : ', 'NF90_INT'
-            if (has_missing) then
-               call get_missing_value(dom_id,ivar,missingINT)
-               write(*,*) 'missing_value     : ', missingINT
-            endif
-            if (has_Fill) then
-               call get_FillValue(    dom_id,ivar,spval_int)
-               write(*,*) '_FillValue        : ', spval_int
-            endif
-         case (NF90_FLOAT)
-            write(*,*) 'xtype             : ', 'NF90_FLOAT'
-            if (has_missing) then
-               call get_missing_value(dom_id,ivar,missingR4)
-               write(*,*) 'missing_value     : ', missingR4
-            endif
-            if (has_Fill) then
-               call get_FillValue(    dom_id,ivar,spval_r4)
-               write(*,*) '_FillValue        : ', spval_r4
-            endif
-         case (NF90_DOUBLE)
-            write(*,*) 'xtype             : ', 'NF90_DOUBLE'
-            if (has_missing) then
-               call get_missing_value(dom_id,ivar,missingR8)
-               write(*,*) 'missing_value     : ', missingR8
-            endif
-            if (has_Fill)    then
-               call get_FillValue(    dom_id,ivar,spval_r8)
-               write(*,*) '_FillValue        : ', spval_r8
-            endif
-      end select
-
-   endif
-
-   !>@todo FIXME : only storing r8 at the moment since DART is not using these values
-   !>              to compress and uncompress file information
-   if (get_add_offset(dom_id,ivar)   /= MISSING_R8 .and. &
-       get_scale_factor(dom_id,ivar) /= MISSING_R8 ) then
-      write(*,*) 'add_offset        : ', get_add_offset(dom_id,ivar)
-      write(*,*) 'scale_factor      : ', get_scale_factor(dom_id,ivar)
-   endif
-
-   write(*,*)
-   
-enddo
-
-end subroutine state_structure_info
-
-
-!-------------------------------------------------------------------------------
-!> Set DART kinds for domain variables
-
-
-subroutine set_dart_kinds(dom_id, num_vars, kind_list)
+!> Set DART qty for domain variables
+subroutine set_dart_qtys(dom_id, num_vars, qty_list)
 
 integer, intent(in) :: dom_id
 integer, intent(in) :: num_vars
@@ -1919,47 +1166,39 @@ integer, intent(in) :: kind_list(num_vars)
 integer :: ivar
 
 do ivar = 1,num_vars
-   state%domain(dom_id)%variable(ivar)%dart_kind = kind_list(ivar)
-   state%domain(dom_id)%variable(ivar)%kind_string = get_name_for_quantity(kind_list(ivar))
+   state%domain(dom_id)%variable(ivar)%qty = qty_list(ivar)
+   state%domain(dom_id)%variable(ivar)%qty_string = get_name_for_quantity(qty_list(ivar))
 enddo
 
-end subroutine set_dart_kinds
-
+end subroutine set_dart_qtys
 
 !-------------------------------------------------------------------------------
-!> Returns the variable dart kind index
-
-!>@todo need to switch all kinds to qty
-function get_kind_index(dom_id, var_id)
+!> Returns the variable dart qty
+function get_qty(dom_id, var_id) !HK @tod why do they call this kind_index? is it not qty?
 
 integer, intent(in) :: dom_id ! domain
 integer, intent(in) :: var_id ! variable
-integer  :: get_kind_index
+integer  :: get_qty
 
-get_kind_index = state%domain(dom_id)%variable(var_id)%dart_kind
+get_kind_index = state%domain(dom_id)%variable(var_id)%qty
 
-end function get_kind_index
-
+end function get_qty
 
 !-------------------------------------------------------------------------------
 !> Returns the variable dart kind string
-
-
-function get_kind_string(dom_id, var_id)
+function get_qty_string(dom_id, var_id)
 
 integer, intent(in) :: dom_id ! domain
 integer, intent(in) :: var_id ! variable
-character(len=obstypelength)  :: get_kind_string
+character(len=obstypelength)  :: get_qty_string
 
-get_kind_string = state%domain(dom_id)%variable(var_id)%kind_string
+get_qty_string = state%domain(dom_id)%variable(var_id)%qty_string
 
-end function get_kind_string
+end function get_qty_string
 
 
 !-------------------------------------------------------------------------------
 !> Return variable id given a domain number and variable name
-
-
 function get_varid_from_varname(dom_id, varname) result(var_id)
 
 integer,          intent(in) :: dom_id
@@ -1982,23 +1221,21 @@ end function get_varid_from_varname
 
 
 !-------------------------------------------------------------------------------
-!> Return variable id given a dart kind index
-
-
-function get_varid_from_kind(dom_id, dart_kind_index) result(var_id)
+!> Return variable id given a dart qty
+function get_varid_from_qty(dom_id, qty) result(var_id)
 
 integer, intent(in)  :: dom_id
-integer, intent(in)  :: dart_kind_index
+integer, intent(in)  :: qty ! HK @todo why do they call this kind_index?
 integer :: var_id
 
 integer :: ivar, num_vars
 
 var_id   = -1
 
-if ( get_num_varids_from_kind(dom_id, dart_kind_index) > 1 ) then
+if ( get_num_varids_from_kind(dom_id, qty) > 1 ) then
    write(string1,*) 'Found ', get_num_varids_from_kind(dom_id, dart_kind_index), &
                     ' > 1'
-   write(string2,*) 'for dart kind : ', get_name_for_quantity(dart_kind_index)
+   write(string2,*) 'for qty kind : ', get_name_for_quantity(dart_kind_index)
    write(string3,*) 'Please use get_varids_from_kind to get a list of indices '
    call error_handler(E_ERR,'get_varid_from_kind', string1, &
               source, text2=string2, text3=string3)
@@ -2007,7 +1244,7 @@ endif
 num_vars = get_num_variables(dom_id)
 
 do ivar = 1, num_vars
-   if ( dart_kind_index == get_kind_index(dom_id, ivar) ) then
+   if ( qty == get_qty_index(dom_id, ivar) ) then
       var_id = ivar
       return
    endif
@@ -2018,19 +1255,17 @@ end function get_varid_from_kind
 
 !-------------------------------------------------------------------------------
 !> Return a list of variable ids in a domain that match a given dart kind index
-
-
-subroutine get_varids_from_kind(dom_id, dart_kind_index, varid_table)
+subroutine get_varids_from_qty(dom_id, qty, varid_table)
 
 integer, intent(in)  :: dom_id
-integer, intent(in)  :: dart_kind_index
+integer, intent(in)  :: qty
 integer, intent(out) :: varid_table(:)
 
 integer :: ivar, indx
 integer :: num_vars
 
-if ( size(varid_table) < get_num_varids_from_kind(dom_id, dart_kind_index) ) then
-   write(string1,*) 'Found ', get_num_varids_from_kind(dom_id, dart_kind_index)
+if ( size(varid_table) < get_num_varids_from_qty(dom_id, qty) ) then
+   write(string1,*) 'Found ', get_num_varids_from_qty(dom_id, qty)
    write(string2,*) 'varid_table must be at least this size, ', &
                     'you have size(varid_table) = ', size(varid_table)
    call error_handler(E_ERR,'get_varids_from_kind', string1, source, text2=string2)
@@ -2042,7 +1277,7 @@ varid_table(:) = -1
 indx = 1
 num_vars = get_num_variables(dom_id)
 do ivar = 1, num_vars
-   if ( dart_kind_index == get_kind_index(dom_id, ivar) ) then
+   if ( qty == get_qty(dom_id, ivar) ) then
       varid_table(indx) = ivar
       indx = indx + 1
    endif
@@ -2388,24 +1623,7 @@ endif
 
 end subroutine assert_below_max_num_domains
 
-!-------------------------------------------------------------------------------
-!>
-
-
-subroutine check_domain_id(dom_id, message)
-integer,          intent(in) :: dom_id
-character(len=*), intent(in) :: message
-
-if (dom_id == diagnostic_domain) return
-
-if (dom_id > state%num_domains .or. dom_id < 0 ) then
-   write(string1,*)'number of known domains is ',state%num_domains
-   write(string2,*)'requesting information for unknown domain ',dom_id
-   call error_handler(E_ERR,'check_domain_id', message, &
-              source, text2=string1, text3=string2)
-endif
-
-end subroutine check_domain_id
+-------------------------------------------------------------------------------
 
 !> @}
 end module state_structure_mod
